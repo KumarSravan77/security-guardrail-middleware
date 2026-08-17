@@ -55,34 +55,39 @@ class GuardrailMiddleware:
         async def replay() -> Message:
             nonlocal sent
             if sent:
-                return {"type": "http.request", "body": b"", "more_body": False}
+                return await receive()
             sent = True
             return {"type": "http.request", "body": sanitized, "more_body": False}
 
         response_start: Message | None = None
         response_body = bytearray()
+        capture_json = False
         async def capture(message: Message):
-            nonlocal response_start
+            nonlocal response_start, capture_json
             if message["type"] == "http.response.start":
                 response_start = message
+                response_headers = MutableHeaders(raw=message["headers"])
+                capture_json = "application/json" in response_headers.get("content-type", "")
+                if not capture_json:
+                    response_headers["x-request-id"] = request_id
+                    response_headers["x-guardrail-policy"] = self.policy.version
+                    await send(message)
                 return
             if message["type"] != "http.response.body":
+                return await send(message)
+            if not capture_json:
                 return await send(message)
             response_body.extend(message.get("body", b""))
             if message.get("more_body", False):
                 return
-            content_type = ""
-            if response_start:
-                content_type = MutableHeaders(raw=response_start["headers"]).get("content-type", "")
             rendered = bytes(response_body)
             output_findings = ()
-            if "application/json" in content_type:
-                try:
-                    output_payload = json.loads(rendered or b"{}")
-                    output_payload, output_findings = sanitize_json(output_payload)
-                    rendered = json.dumps(output_payload, ensure_ascii=False, separators=(",", ":")).encode()
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    output_findings = ()
+            try:
+                output_payload = json.loads(rendered or b"{}")
+                output_payload, output_findings = sanitize_json(output_payload)
+                rendered = json.dumps(output_payload, ensure_ascii=False, separators=(",", ":")).encode()
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                output_findings = ()
             if output_findings:
                 action = "block" if self.policy.should_block(output_findings, "output") else "sanitize"
                 self._audit("output_evaluated", request_id, bytes(response_body), output_findings, "output", action)
