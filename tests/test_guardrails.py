@@ -1,6 +1,9 @@
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from app import app
+from guardrails import GuardrailMiddleware
 from guardrails.scanner import redact_pii, scan, sanitize_json, unsafe_url_reason
 from guardrails.tools import ToolPolicy
 
@@ -88,3 +91,22 @@ def test_policy_headers_and_stable_error_shape():
     assert response.headers["x-request-id"]
     assert response.headers["x-guardrail-policy"]
     assert response.json()["error"]["code"] == "input_rejected"
+
+
+def test_non_json_streaming_response_is_not_buffered_or_rewritten():
+    streaming_app = FastAPI()
+    streaming_app.add_middleware(GuardrailMiddleware, audit_key="test-key-long-enough")
+
+    @streaming_app.post("/stream")
+    async def stream():
+        async def chunks():
+            yield "data: first\n\n"
+            yield "data: second\n\n"
+        return StreamingResponse(chunks(), media_type="text/event-stream")
+
+    with TestClient(streaming_app) as stream_client:
+        with stream_client.stream("POST", "/stream", json={"prompt": "hello"}) as response:
+            assert response.status_code == 200
+            assert response.headers["x-guardrail-policy"]
+            response.read()
+            assert response.text == "data: first\n\ndata: second\n\n"
