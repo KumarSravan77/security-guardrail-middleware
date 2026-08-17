@@ -5,6 +5,9 @@ description = "FastAPI middleware for prompt-injection detection and PII redacti
 requires-python = ">=3.10"
 dependencies = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1"]
 
+[tool.setuptools.packages.find]
+include = ["guardrails*"]
+
 [project.optional-dependencies]
 dev = ["httpx>=0.27,<1", "pytest>=8,<9"]
 
