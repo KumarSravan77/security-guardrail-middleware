@@ -13,4 +13,5 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install -e '.[dev]'
       - run: pytest -q
+      - run: python -m guardrails.evaluate --minimum-score 1.0
       - run: docker build -t security-guardrail-middleware .
